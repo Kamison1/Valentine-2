@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DJ Transition Tool</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --line: #2c3038; --text: #e6e8eb; --muted: #9aa1ab;
+    --a: #5b8def; --b: #ef7a5b; --mix: #c9ccd2; --blend: rgba(242, 193, 78, 0.16);
+    --accent: #f2c14e; --swap: #b07cf0; --warn: #f2a14e; --ok: #5bd18b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 16px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header span { color: var(--muted); }
+  main { padding: 20px 24px; max-width: 1280px; margin: 0 auto; display: grid; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  label.file { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+  button { background: var(--accent); color: #1a1a1a; border: 0; border-radius: 6px; padding: 9px 16px;
+           font-weight: 600; cursor: pointer; }
+  button.secondary { background: #343944; color: var(--text); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .status { color: var(--muted); }
+  .status.error { color: #ff6b6b; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 14px; }
+  .card.a h3 { color: var(--a); } .card.b h3 { color: var(--b); }
+  .stats { display: flex; gap: 22px; flex-wrap: wrap; }
+  .stat b { display: block; font-size: 20px; }
+  .stat small { color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .badge.ok { background: rgba(91,209,139,.15); color: var(--ok); }
+  .badge.bad { background: rgba(242,161,78,.15); color: var(--warn); }
+  ul.warn { margin: 8px 0 0; padding-left: 18px; color: var(--warn); }
+  canvas { width: 100%; display: block; background: #101215; border-radius: 6px; }
+  .lane-label { color: var(--muted); font-size: 12px; margin: 10px 0 4px; display: flex; justify-content: space-between; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px 24px; }
+  .ctl { display: flex; flex-direction: column; gap: 4px; }
+  .ctl > span { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
+  .ctl output { color: var(--text); font-variant-numeric: tabular-nums; }
+  select, input[type=number] { background: #101215; color: var(--text); border: 1px solid var(--line);
+                               border-radius: 6px; padding: 6px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .suggest { display: flex; flex-wrap: wrap; gap: 6px; }
+  .suggest button { padding: 4px 8px; font-size: 12px; font-weight: 500; }
+  audio { width: 100%; }
+  .info { color: var(--muted); font-size: 13px; }
+  .hidden { display: none !important; }
+  a { color: var(--accent); }
+  @media (max-width: 760px) { .cards { grid-template-columns: 1fr; } main { padding: 12px; } }
+</style>
+</head>
+<body>
+<header><h1>DJ Transition Tool</h1><span>auto-merge two songs, then fine-tune the blend</span></header>
+<main>
+  <section class="panel">
+    <form id="upload" class="row">
+      <label class="file">Song A (outgoing)<input type="file" name="song_a" accept="{{ extensions }}" required></label>
+      <label class="file">Song B (incoming)<input type="file" name="song_b" accept="{{ extensions }}" required></label>
+      <button id="automerge" type="submit">Auto-merge</button>
+      <span id="status" class="status">Supported: mp3, wav, flac</span>
+    </form>
+  </section>
+
+  <div id="workspace" class="hidden" style="display:grid; gap:16px">
+    <section class="cards">
+      <div class="panel card a"><h3>Song A</h3><div class="stats" id="statsA"></div></div>
+      <div class="panel card b"><h3>Song B</h3><div class="stats" id="statsB"></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="row" style="justify-content:space-between">
+        <div><span id="keyBadge"></span> <span class="info" id="tempoInfo"></span></div>
+        <div class="info" id="blendInfo"></div>
+      </div>
+      <ul class="warn" id="warnings"></ul>
+    </section>
+
+    <section class="panel">
+      <div class="lane-label"><span>Song A - full track (click to move the mix-out point)</span><span id="aLen"></span></div>
+      <canvas id="ovA" height="70"></canvas>
+      <div class="lane-label"><span>Song B - full track</span><span id="bLen"></span></div>
+      <canvas id="ovB" height="70"></canvas>
+    </section>
+
+    <section class="panel">
+      <div class="lane-label"><span>Transition preview: <b style="color:var(--a)">A</b> / <b style="color:var(--b)">B</b> / merged - yellow = blend, purple = bass swap (click to seek)</span>
+        <span id="previewTiming"></span></div>
+      <canvas id="preview" height="300"></canvas>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1; min-width:260px"><div class="lane-label"><span>Preview (around the transition)</span></div><audio id="previewAudio" controls></audio></div>
+        <div style="flex:1; min-width:260px"><div class="lane-label"><span>Full merged track</span><span id="fullLinks"></span></div><audio id="fullAudio" controls></audio></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="controls">
+        <div class="ctl" style="grid-column: 1 / -1">
+          <span>Mix-out point in Song A (snaps to bars) <output id="mixOutLabel"></output></span>
+          <input type="range" id="mixOut" min="0" max="0" step="1">
+          <div class="suggest" id="suggestions"></div>
+        </div>
+        <div class="ctl">
+          <span>Song B start offset (beats from its first downbeat) <output id="offsetLabel">0</output></span>
+          <input type="range" id="bOffset" min="-16" max="128" step="1" value="0">
+        </div>
+        <div class="ctl">
+          <span>Transition length</span>
+          <select id="bars">{% for b in bar_choices %}<option value="{{ b }}" {% if b == 16 %}selected{% endif %}>{{ b }} bars</option>{% endfor %}</select>
+        </div>
+        <div class="ctl">
+          <span>Tempo match</span>
+          <select id="stretch">
+            <option value="auto">Auto (smallest change)</option>
+            <option value="a">Stretch A to B's tempo</option>
+            <option value="b">Stretch B to A's tempo</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <span>Half-time / double-time</span>
+          <select id="multiplier">
+            <option value="auto">Auto</option>
+            <option value="1">Off (1:1)</option>
+            <option value="2">A half-time (B = 2 x A)</option>
+            <option value="0.5">A double-time (B = A / 2)</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <span><label><input type="checkbox" id="bassSwap" checked> Bass swap</label> <output id="xoverLabel">180 Hz</output></span>
+          <input type="range" id="crossover" min="60" max="400" step="10" value="180">
+        </div>
+        <div class="ctl">
+          <span><label><input type="checkbox" id="vocalCut" checked> Vocal-clash EQ cut on A</label> <output id="vocalLabel">-6 dB</output></span>
+          <input type="range" id="vocalDb" min="-12" max="-2" step="1" value="-6">
+        </div>
+        <div class="ctl">
+          <span>Pitch shift <output id="pitchLabel">0 st</output></span>
+          <input type="range" id="pitch" min="-6" max="6" step="1" value="0">
+          <div class="row" style="gap:8px">
+            <select id="pitchTarget"><option value="b">on Song B</option><option value="a">on Song A</option></select>
+            <button class="secondary" id="applyPitch" type="button">Apply suggested</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <span>Loudness</span>
+          <label><input type="checkbox" id="gainMatch" checked> Match B's level to A</label>
+        </div>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button id="renderFull" type="button">Render full track</button>
+        <span id="renderStatus" class="status"></span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null;          // last server payload
+let sid = null;
+let downbeats = [];
+let previewReq = 0;
+let debounce = null;
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+const fmt = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function setStatus(el, msg, isError = false) {
+  el.textContent = msg; el.classList.toggle("error", isError);
+}
+
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({ error: `Server error (${r.status})` }));
+  if (!r.ok) throw new Error(data.error || `Server error (${r.status})`);
+  return data;
+}
+
+// ------------------------------------------------------------------ upload
+$("upload").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("automerge");
+  btn.disabled = true;
+  setStatus($("status"), "Analysing both songs and rendering the first mix... (this can take ~30s)");
+  try {
+    const r = await fetch("/api/automerge", { method: "POST", body: new FormData(e.target) });
+    const data = await r.json().catch(() => ({ error: `Server error (${r.status})` }));
+    if (!r.ok) throw new Error(data.error);
+    sid = data.sid;
+    downbeats = data.downbeats_a;
+    state = data;
+    initControls(data);
+    renderAll(data);
+    setFull(data.full);
+    $("workspace").classList.remove("hidden");
+    setStatus($("status"), "Done - first version rendered with the best automatic settings. Tweak below; each change re-renders a short preview.");
+  } catch (err) {
+    setStatus($("status"), err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- controls
+function initControls(d) {
+  const s = d.settings;
+  $("mixOut").max = downbeats.length - 1;
+  $("mixOut").value = nearestBar(d.info.mix_out_time);
+  $("bOffset").value = s.b_offset_beats;
+  $("bars").value = s.transition_bars;
+  $("stretch").value = s.stretch;
+  $("multiplier").value = s.multiplier;
+  $("bassSwap").checked = s.bass_swap;
+  $("crossover").value = s.crossover_hz;
+  $("vocalCut").checked = s.vocal_cut;
+  $("vocalDb").value = s.vocal_cut_db;
+  $("pitch").value = s.pitch_semitones;
+  $("pitchTarget").value = s.pitch_target;
+  $("gainMatch").checked = s.gain_match;
+  updateLabels();
+}
+
+function nearestBar(t) {
+  let best = 0;
+  downbeats.forEach((d, i) => { if (Math.abs(d - t) < Math.abs(downbeats[best] - t)) best = i; });
+  return best;
+}
+
+function currentSettings() {
+  return {
+    mix_out_time: downbeats[+$("mixOut").value],
+    b_offset_beats: +$("bOffset").value,
+    transition_bars: +$("bars").value,
+    stretch: $("stretch").value,
+    multiplier: $("multiplier").value,
+    bass_swap: $("bassSwap").checked,
+    crossover_hz: +$("crossover").value,
+    vocal_cut: $("vocalCut").checked,
+    vocal_cut_db: +$("vocalDb").value,
+    pitch_semitones: +$("pitch").value,
+    pitch_target: $("pitchTarget").value,
+    gain_match: $("gainMatch").checked,
+  };
+}
+
+function updateLabels() {
+  const i = +$("mixOut").value;
+  $("mixOutLabel").textContent = downbeats.length ? `bar ${i + 1} - ${fmt(downbeats[i])}` : "";
+  $("offsetLabel").textContent = `${+$("bOffset").value > 0 ? "+" : ""}${$("bOffset").value} beats`;
+  $("xoverLabel").textContent = `${$("crossover").value} Hz`;
+  $("vocalLabel").textContent = `${$("vocalDb").value} dB`;
+  const p = +$("pitch").value;
+  $("pitchLabel").textContent = `${p > 0 ? "+" : ""}${p} st`;
+}
+
+function schedulePreview() {
+  updateLabels();
+  clearTimeout(debounce);
+  debounce = setTimeout(requestPreview, 350);
+}
+
+async function requestPreview() {
+  const id = ++previewReq;
+  setStatus($("renderStatus"), "Rendering preview...");
+  try {
+    const data = await postJSON("/api/preview", { sid, settings: currentSettings() });
+    if (id !== previewReq) return;   // a newer request superseded this one
+    state = { ...state, ...data };
+    renderAll(state);
+    setStatus($("renderStatus"), `Preview updated (${data.info.render_seconds}s). Press "Render full track" to export.`);
+  } catch (err) {
+    if (id === previewReq) setStatus($("renderStatus"), err.message, true);
+  }
+}
+
+["mixOut", "bOffset", "crossover", "vocalDb", "pitch"].forEach((id) => {
+  $(id).addEventListener("input", updateLabels);
+  $(id).addEventListener("change", schedulePreview);
+});
+["bars", "stretch", "multiplier", "bassSwap", "vocalCut", "pitchTarget", "gainMatch"].forEach((id) =>
+  $(id).addEventListener("change", schedulePreview));
+
+$("applyPitch").addEventListener("click", () => {
+  const fix = state && state.info.keys.suggested_pitch_b;
+  if (fix === null || fix === undefined) { setStatus($("renderStatus"), "No small pitch shift makes these keys compatible.", true); return; }
+  $("pitchTarget").value = "b";
+  $("pitch").value = fix;
+  schedulePreview();
+});
+
+$("renderFull").addEventListener("click", async () => {
+  const btn = $("renderFull");
+  btn.disabled = true;
+  setStatus($("renderStatus"), "Rendering the full track (WAV + MP3)...");
+  try {
+    const data = await postJSON("/api/render", { sid, settings: currentSettings() });
+    setFull(data.full);
+    setStatus($("renderStatus"), `Full track rendered in ${data.full.render_seconds}s.`);
+  } catch (err) {
+    setStatus($("renderStatus"), err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function setFull(full) {
+  $("fullAudio").src = full.wav;
+  const dl = (u, label) => `<a href="${u}&dl=1">${label}</a>`;
+  $("fullLinks").innerHTML = [dl(full.wav, "WAV"), full.mp3 ? dl(full.mp3, "MP3") : ""].filter(Boolean).join(" · ")
+    + ` <span class="info">(${fmt(full.duration)})</span>`;
+}
+
+// ------------------------------------------------------------------ display
+function renderAll(d) {
+  const a = d.analysis.a, b = d.analysis.b, info = d.info;
+  const stat = (v, l) => `<div class="stat"><b>${v}</b><small>${l}</small></div>`;
+  $("statsA").innerHTML = stat(a.bpm.toFixed(1), "BPM detected") + stat(info.played_bpm_a.toFixed(1), "BPM in mix")
+    + stat(info.keys.key_a, "key") + stat(info.keys.camelot_a, "Camelot");
+  $("statsB").innerHTML = stat(b.bpm.toFixed(1), "BPM detected") + stat(info.played_bpm_b.toFixed(1), "BPM in mix")
+    + stat(info.keys.key_b, "key") + stat(info.keys.camelot_b, "Camelot");
+  $("keyBadge").innerHTML = info.keys.compatible
+    ? `<span class="badge ok">Harmonically compatible</span>`
+    : `<span class="badge bad">Key clash${info.keys.suggested_pitch_b ? ` - try ${info.keys.suggested_pitch_b > 0 ? "+" : ""}${info.keys.suggested_pitch_b} st on B` : ""}</span>`;
+  $("tempoInfo").textContent = info.tempo;
+  $("blendInfo").textContent = `Blend ${fmt(info.blend_start)}-${fmt(info.blend_end)} (${info.blend_seconds.toFixed(1)}s) · total ${fmt(info.total_duration)}`;
+  $("warnings").innerHTML = info.warnings.map((w) => `<li>${esc(w)}</li>`).join("");
+  $("aLen").textContent = fmt(a.duration);
+  $("bLen").textContent = fmt(b.duration);
+  $("previewTiming").textContent = `${fmt(d.preview.window[0])} - ${fmt(d.preview.window[1])}`;
+  $("suggestions").innerHTML = "Suggested: " + (d.suggestions || []).map((s) =>
+    `<button class="secondary" type="button" title="${esc(s.reason)}" data-t="${s.time}">${fmt(s.time)} (bar ${s.bar + 1})</button>`).join("");
+  $("suggestions").querySelectorAll("button").forEach((btn) => btn.addEventListener("click", () => {
+    $("mixOut").value = nearestBar(+btn.dataset.t); schedulePreview();
+  }));
+
+  const pa = $("previewAudio");
+  if (!pa.src.endsWith(d.preview.url)) pa.src = d.preview.url;
+  drawOverviews();
+  drawPreview();
+}
+
+function setupCanvas(c) {
+  if (!c._h) c._h = +c.getAttribute("height");  // CSS height in px, fixed
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth;
+  c.width = w * dpr; c.height = c._h * dpr; c.style.height = `${c._h}px`;
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, c._h);
+  return [ctx, w, c._h];
+}
+
+function drawWave(ctx, peaks, x0, w, y0, h, color) {
+  ctx.fillStyle = color;
+  const mid = y0 + h / 2, n = peaks.length;
+  for (let i = 0; i < n; i++) {
+    const [lo, hi] = peaks[i];
+    const x = x0 + (i / n) * w;
+    ctx.fillRect(x, mid - hi * h / 2, Math.max(1, w / n), Math.max(1, (hi - lo) * h / 2));
+  }
+}
+
+function drawOverviews() {
+  if (!state) return;
+  const info = state.info;
+  const lanes = [
+    ["ovA", state.overview.a, state.analysis.a.duration, css("--a"), info.mix_out_time, info.blend_seconds * info.rate_a],
+    ["ovB", state.overview.b, state.analysis.b.duration, css("--b"), info.b_start, info.blend_seconds * info.rate_b],
+  ];
+  for (const [id, peaks, dur, color, start, len] of lanes) {
+    const [ctx, w, h] = setupCanvas($(id));
+    ctx.fillStyle = css("--blend").replace("0.16", "0.35");
+    ctx.fillRect((start / dur) * w, 0, (len / dur) * w, h);
+    drawWave(ctx, peaks, 0, w, 4, h - 8, color);
+    if (id === "ovA") {  // bar ticks
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      downbeats.forEach((t, i) => ctx.fillRect((t / dur) * w, 0, 1, i % 8 === 0 ? 10 : 4));
+    }
+    ctx.fillStyle = css("--accent");
+    ctx.fillRect((start / dur) * w - 1, 0, 2, h);
+  }
+}
+
+function drawPreview() {
+  if (!state) return;
+  const p = state.preview, info = state.info;
+  const [ctx, w, h] = setupCanvas($("preview"));
+  const [w0, w1] = p.window, span = w1 - w0;
+  const X = (t) => ((t - w0) / span) * w;
+  const laneH = h / 3;
+
+  ctx.fillStyle = css("--blend");
+  ctx.fillRect(X(info.blend_start), 0, X(info.blend_end) - X(info.blend_start), h);
+
+  const lanes = [[p.peaks.a, css("--a"), p.beats.a], [p.peaks.b, css("--b"), p.beats.b],
+                 [p.peaks.mix, css("--mix"), p.beats.a.concat(p.beats.b)]];
+  lanes.forEach(([peaks, color, beats], k) => {
+    const y0 = k * laneH;
+    for (const bm of beats) {
+      ctx.fillStyle = bm.down ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.08)";
+      ctx.fillRect(X(bm.t), y0, 1, laneH);
+    }
+    drawWave(ctx, peaks, 0, w, y0 + 6, laneH - 12, color);
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fillRect(0, y0 + laneH - 1, w, 1);
+  });
+  if (state.settings.bass_swap) {
+    ctx.fillStyle = css("--swap");
+    ctx.fillRect(X(info.swap_time) - 1, 0, 2, h);
+  }
+  const pa = $("previewAudio");
+  if (pa.currentTime > 0) {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(X(w0 + pa.currentTime), 0, 2, h);
+  }
+}
+
+$("preview").addEventListener("click", (e) => {
+  if (!state) return;
+  const r = e.target.getBoundingClientRect();
+  const pa = $("previewAudio");
+  const [w0, w1] = state.preview.window;
+  pa.currentTime = ((e.clientX - r.left) / r.width) * (w1 - w0);
+  pa.play();
+});
+
+$("ovA").addEventListener("click", (e) => {
+  if (!state) return;
+  const r = e.target.getBoundingClientRect();
+  $("mixOut").value = nearestBar(((e.clientX - r.left) / r.width) * state.analysis.a.duration);
+  schedulePreview();
+});
+
+(function tick() {
+  const pa = $("previewAudio");
+  if (state && !pa.paused) drawPreview();
+  requestAnimationFrame(tick);
+})();
+window.addEventListener("resize", () => { drawOverviews(); drawPreview(); });
+</script>
+</body>
+</html>
