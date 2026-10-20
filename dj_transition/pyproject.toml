@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "djmix"
+version = "0.1.0"
+description = "Automatic DJ-style transitions between two songs, with an interactive web UI"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24", "scipy>=1.10", "librosa>=0.10", "soundfile>=0.12",
+    "pyrubberband>=0.4", "flask>=3.0", "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+madmom = ["madmom>=0.16"]
+
+[project.scripts]
+djmix = "djmix.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["djmix*"]
+
+[tool.setuptools.package-data]
+"djmix.web" = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
